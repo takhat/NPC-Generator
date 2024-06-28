@@ -6,10 +6,11 @@ from ..models.greeting import Greeting
 from sqlalchemy import func, union, except_
 from openai import OpenAI
 
-client = OpenAI(
-api_key = os.environ.get("LLAMA_API_KEY"),
-base_url = "https://api.llama-api.com"
-)
+# client = OpenAI(
+# api_key = os.environ.get("LLAMA_API_KEY"),
+# base_url = "https://api.llama-api.com"
+# )
+client= OpenAI()
 
 bp = Blueprint("characters", __name__, url_prefix="/characters")
 
@@ -47,41 +48,57 @@ def get_characters():
 
     return jsonify(response)
 
+
 @bp.get("/<char_id>/greetings")
 def get_greetings(char_id):
-    character=validate_model(Character,char_id)
+    character = validate_model(Character, char_id)
+    
     if not character.greetings:
-        return make_response(
-            jsonify(
-                f"No greetings found for {character.name}"), 201)
+        return make_response(jsonify(f"No greetings found for {character.name} "), 201)
+    
+    response = {"Character Name" : character.name,
+                "Greetings" : []}
+    for greeting in character.greetings:
+        response["Greetings"].append({
+            "greeting" : greeting.greeting_text
+        })
+    
+    return jsonify(response)
+
 
 @bp.post("/<char_id>/generate")
 def add_greetings(char_id):
-    character=validate_model(Character,char_id)
-    greetings=generate_greeting(character)
-    if character.greetings:
-        return make_response(
-            jsonify(f"Greetings already exist for {character.name}"), 201)     
+    character_obj = validate_model(Character, char_id)
+    greetings = generate_greetings(character_obj)
+
+    if character_obj.greetings:
+        return make_response(jsonify(f"Greetings already generated for {character_obj.name} "), 201)
+    
     new_greetings = []
+
     for greeting in greetings:
+        text = greeting[greeting.find(" ")+1:] #Splice the numeric marker off each response
         new_greeting = Greeting(
-            greeting_text = greeting[greeting.find(" ")+1:].strip("\""),
-            character = character
+            greeting_text = text.strip("\""), #Strip the response of any extraneous quotes
+            character = character_obj
         )
         new_greetings.append(new_greeting)
-        db.session.add_all(new_greetings)
-        db.session.commit()
-        return make_response(jsonify(f"Greetings successfully added to {character.name}"), 201)
-def generate_greeting(character):
-    prompt = f"I am writing a fantasy style role playing video game. I have an npc named {character.name} who is {character.age}.They are a {character.occupation} who has a {character.personality} personality. Can you help me python style list of 10 stock phrases they might use when another character talks to them?"
-    response = client.chat.completions.create(
-        # model="gpt-3.5-turbo",
-        model="llama-13b-chat",
+    
+    db.session.add_all(new_greetings) #Add all new Greeting records to db
+    db.session.commit()
+
+    return make_response(jsonify(f"Greetings successfully added to {character_obj.name}"), 201)
+
+def generate_greetings(character):
+
+    prompt = f"I am writing a video game in the style of The Witcher. I have an npc named {character.name} who is {character.age} years old. They are a {character.occupation} who has a {character.personality} personality. Please generate a python style list of 10 stock phrases they might use when the main character talks to them"
+    completion = client.chat.completions.create(
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "user", "content": prompt}
         ]
     )
-    return response.choices[0].message.content.split("\n")
+    return completion.choices[0].message.content.split("\n")
 
 def validate_model(cls,id):
     try:
